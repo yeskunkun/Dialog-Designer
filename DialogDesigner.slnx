@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="DialogDesigner/DialogDesigner.vcxproj" Id="6c9e5b3c-7ce0-49e7-8436-2b8419efe551" />
+</Solution>
