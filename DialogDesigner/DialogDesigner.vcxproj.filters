@@ -23,6 +23,9 @@
     <None Include="designer.py">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="control_converter.py">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Designer.h">

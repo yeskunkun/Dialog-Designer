@@ -1,5 +1,4 @@
-// ConsoleApplication1.cpp - 重构版
-// 3Q ChatGPT
+// ConsoleApplication1.cpp
 #include <Windows.h>
 #include <Uxtheme.h>
 #include <dwmapi.h>
@@ -19,9 +18,9 @@
 
 using namespace std;
 
-// ==================== 全局变量 ====================
+// 全局变量
 HFONT g_hGuiFont = NULL;
-HWND g_HWND = NULL;           // 设计器窗口
+HWND g_HWND = NULL;           // 主窗口
 HWND g_PropertiesHWND = NULL; // 属性窗口
 HWND hwndParent = NULL;
 
@@ -29,10 +28,10 @@ const int START_WIDTH = 400;
 const int START_HEIGHT = 300;
 int isDarkThemeEnabled = false;
 
-vector<LPCWSTR> g_listdescription = { L"光标", L"文字", L"按钮", L"输入框" };
+vector<LPCWSTR> g_listdescription = { L"鼠标指针", L"文本", L"按钮", L"编辑框" };
 vector<LPCWSTR> g_listclassname = { L"", L"Static", L"Button", L"Edit" };
 #include "Designer.h"
-// ==================== 外部声明 ====================
+// 外部变量
 extern vector<Control> g_Controls;
 extern int g_CurIndex;
 extern int g_ControlIdCounter;
@@ -46,10 +45,11 @@ enum MainWindowControlIds {
 };
 
 enum MainMenuCommandIds {
-	IDM_THEME_MICA = 0xE001,
-	IDM_THEME_ACRYLIC = 0xE002,
-	IDM_THEME_TABBED = 0xE003,
-	IDM_THEME_DEFAULT = 0xE004,
+	IDM_FILE_PREVIEW = 0xE001,
+	IDM_THEME_MICA = 0xE002,
+	IDM_THEME_ACRYLIC = 0xE003,
+	IDM_THEME_TABBED = 0xE004,
+	IDM_THEME_DEFAULT = 0xE005,
 	IDM_EDIT_DUPLICATE = 0xE101,
 	IDM_EDIT_DELETE = 0xE102,
 	IDM_EDIT_MOVE_UP = 0xE103,
@@ -74,9 +74,145 @@ void ExecuteDuplicateSelectedControl() {
 	DuplicateControl(g_CurIndex);
 }
 
+wstring EscapeCodeString(const wstring& input) {
+	wstring out;
+	out.reserve(input.size() + 16);
+	for (size_t i = 0; i < input.size(); ++i) {
+		wchar_t ch = input[i];
+		if (ch == L'\\' && i + 1 < input.size()) {
+			wchar_t next = input[i + 1];
+			if (next == L'n' || next == L'r' || next == L't' || next == L'\\' || next == L'\"') {
+				out += L'\\';
+				out += next;
+				++i;
+				continue;
+			}
+		}
+		if (ch == L'\r') {
+			if (i + 1 < input.size() && input[i + 1] == L'\n') {
+				++i;
+			}
+			out += L"\\n";
+			continue;
+		}
+		if (ch == L'\n') {
+			out += L"\\n";
+			continue;
+		}
+		switch (ch) {
+		case L'\\': out += L"\\\\"; break;
+		case L'\"': out += L"\\\""; break;
+		case L'\t': out += L"\\t"; break;
+		default: out += ch; break;
+		}
+	}
+	return out;
+}
+
+wstring DecodeEscapedTextForControl(const wstring& input) {
+	wstring out;
+	out.reserve(input.size());
+	for (size_t i = 0; i < input.size(); ++i) {
+		wchar_t ch = input[i];
+		if (ch == L'\\' && i + 1 < input.size()) {
+			wchar_t next = input[i + 1];
+			switch (next) {
+			case L'n': out += L"\r\n"; ++i; continue;
+			case L'r': out += L'\r'; ++i; continue;
+			case L't': out += L'\t'; ++i; continue;
+			case L'\\': out += L'\\'; ++i; continue;
+			case L'\"': out += L'\"'; ++i; continue;
+			default: break;
+			}
+		}
+		out += ch;
+	}
+	return out;
+}
+
+HWND g_PreviewHWND = NULL;
 HWND g_ChangePanelHwnd = NULL;
 HWND g_ChangeListHwnd = NULL;
 HWND g_ChangeEditHwnd = NULL;
+
+void RegisterPreviewWindowClass() {
+	static bool registered = false;
+	if (registered) return;
+
+	WNDCLASSEXW wc = { sizeof(WNDCLASSEXW) };
+	wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) -> LRESULT {
+		switch (msg) {
+		case WM_CREATE: {
+			for (const auto& ctl : g_Controls) {
+				if (ctl.className.empty()) continue;
+				DWORD style = WS_CHILD | WS_VISIBLE;
+				DWORD exStyle = 0;
+				if (ctl.className == L"Edit") {
+					style |= ES_LEFT | ES_AUTOHSCROLL;
+					exStyle |= WS_EX_CLIENTEDGE;
+				}
+				else if (ctl.className == L"Static") {
+					style |= SS_LEFT;
+				}
+				
+				HWND hChild = CreateWindowExW(exStyle, ctl.className.c_str(), DecodeEscapedTextForControl(ctl.title).c_str(),
+					style, ctl.x, ctl.y, ctl.width, ctl.height, hwnd, 0, GetModuleHandleW(0), 0);
+				if (hChild) {
+					HFONT hFont = ctl.hFont ? ctl.hFont : g_hGuiFont;
+					if (hFont) {
+						SendMessageW(hChild, WM_SETFONT, WPARAM(hFont), TRUE);
+					}
+				}
+			}
+			return 0;
+		}
+		case WM_ERASEBKGND: {
+			RECT rect;
+			GetClientRect(hwnd, &rect);
+			HBRUSH hBrush = CreateSolidBrush(DarkMode::CLR_BG_MAIN);
+			FillRect((HDC)wparam, &rect, hBrush);
+			DeleteObject(hBrush);
+			return 1;
+		}
+		case WM_CLOSE: {
+			DestroyWindow(hwnd);
+			return 0;
+		}
+		case WM_DESTROY: {
+			EnableWindow(hwndParent, TRUE);
+			if (g_PreviewHWND == hwnd) g_PreviewHWND = NULL;
+			SetActiveWindow(hwndParent);
+			return 0;
+		}
+		}
+		return DefWindowProcW(hwnd, msg, wparam, lparam);
+		};
+	wc.hInstance = GetModuleHandleW(0);
+	wc.hCursor = LoadCursorW(0, IDC_ARROW);
+	wc.lpszClassName = L"DialogDesignerPreview";
+	wc.hbrBackground = NULL;
+	RegisterClassExW(&wc);
+	registered = true;
+}
+
+void ShowPreviewWindow() {
+	if (!g_HWND) return;
+	RegisterPreviewWindowClass();
+	if (g_PreviewHWND && IsWindow(g_PreviewHWND)) {
+		DestroyWindow(g_PreviewHWND);
+	}
+	EnableWindow(hwndParent, false);
+	g_PreviewHWND = CreateWindowExW(1, L"DialogDesignerPreview", L"预览",
+		WS_OVERLAPPEDWINDOW & ~WS_MINIMIZEBOX | WS_CLIPCHILDREN | WS_VISIBLE,
+		CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, hwndParent, 0, GetModuleHandleW(0), 0);
+	if (!g_PreviewHWND) return;
+
+	RECT rc{};
+	GetClientRect(g_HWND, &rc);
+	ResizeWindow(g_PreviewHWND, max(100, rc.right), max(100, rc.bottom), false);
+	ShowWindow(g_PreviewHWND, SW_SHOW);
+	UpdateWindow(g_PreviewHWND);
+}
 
 void SyncControlSummaryPanel() {
 	if (!g_ChangeListHwnd) return;
@@ -91,10 +227,15 @@ void SyncControlSummaryPanel() {
 		SendMessageW(g_ChangeListHwnd, LB_SETCURSEL, g_CurIndex, 0);
 	}
 }
-//其实是刷新代码
+// 实现刷新标记
+bool updating = false;
 void AppendControlChangeMarker() {
 	if (!g_ChangeEditHwnd) return;
 	CreateThread(0, 0, [](LPVOID) -> DWORD {
+		if (updating) {
+			return false;
+		}
+		updating = true;
 		int textLen = GetWindowTextLengthW(g_ChangeEditHwnd);
 		SendMessageW(g_ChangeEditHwnd, EM_SETSEL, 0, textLen);
 		wstringstream str;
@@ -103,31 +244,37 @@ void AppendControlChangeMarker() {
 		wchar_t title[256]{};
 		GetWindowTextW(g_HWND, title, 256);
 		auto sz = GetWindowSize(g_HWND, false);
-		str << L"dialog," << title << L",DEF,DEF," <<
+		wstring escapedDialogTitle = EscapeCodeString(title);
+		str << L"dialog,\"" << escapedDialogTitle << L"\",DEF,DEF," <<
 			sz.cx << L"," << sz.cy << L"\r\n";
 		//ALL the controls
 		for (size_t i = 0; i < g_Controls.size(); ++i) {
 			auto ctl = g_Controls[i];
 			auto fnt = GetWindowFontInfo(ctl.hwnd);
-			str << ctl.className.c_str() << L"," << ctl.title.c_str()
-				<< L"," << ctl.x << L"," << ctl.y << L"," <<
-				ctl.width << L"," << ctl.height << L","
-				<< fnt.faceName << L"," << fnt.height << L"," << fnt.weight << L"," << fnt.underline << L"," << fnt.italic << L"," << fnt.strikeOut << L"\r\n";
+			wstring escapedTitle = EscapeCodeString(ctl.title);
+			wstring escapedFontName = EscapeCodeString(fnt.faceName);
+			str << ctl.className.c_str() << L",\"" << escapedTitle
+				<< L"\"," << ctl.x << L"," << ctl.y << L"," <<
+				ctl.width << L"," << ctl.height << L",\""
+				<< escapedFontName << L"\"," << fnt.height << L"," << fnt.weight << L"," << fnt.underline << L"," << fnt.italic << L"," << fnt.strikeOut << L"\r\n";
 		}
 		SendMessageW(g_ChangeEditHwnd, EM_REPLACESEL, FALSE, LPARAM(str.str().c_str()));
+		updating = false;
 		return 0;
 		}, 0, 0, 0);
 	//DarkModeAPI::ApplyToAll(g_HWND);
 }
 
-// ==================== 窗口过程 ====================
+// 窗口过程函数
 LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 	switch (msg) {
 	case WM_CREATE: {
 		// 创建菜单
 		HMENU hMenu = CreateMenu();
 		HMENU smenu = CreatePopupMenu();
-		AppendMenuW(smenu, MF_STRING, IDCANCEL, L"退出(&X)");
+		AppendMenuW(smenu, MF_STRING, IDM_FILE_PREVIEW, L"预览(&R)\tF5");
+		AppendMenuW(smenu, MF_SEPARATOR, 0, 0);
+		AppendMenuW(smenu, MF_STRING, IDCANCEL, L"取消(&X)");
 		AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)smenu, L"文件(&F)");
 		smenu = CreatePopupMenu();
 		AppendMenuW(smenu, MF_STRING, IDM_EDIT_DUPLICATE, L"复制(&C)");
@@ -147,15 +294,15 @@ LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 		AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)smenu, L"主题(&T)");
 		SetMenu(hwnd, hMenu);
 
-		// 工具箱标签
-		HWND tmph = CreateWindowExW(0, L"Static", L"工具箱",
+		// 创建控件
+		HWND tmph = CreateWindowExW(0, L"Static", L"对话框设计器",
 			WS_CHILD | WS_VISIBLE | SS_CENTER,
 			2, 1, 200, 23, hwnd, 0, 0, 0);
 
-		HFONT hFont = CreateFontW(23, 0, 0, 0, FW_BOLD, 0, 0, 0, 1, 0, 0, 0, 0, L"微软雅黑");
+		HFONT hFont = CreateFontW(23, 0, 0, 0, FW_BOLD, 0, 0, 0, 1, 0, 0, 0, 0, L"Segoe UI");
 		SendMessageW(tmph, WM_SETFONT, WPARAM(hFont), 1);
 
-		// 控件列表
+		// 工具箱列表
 		tmph = CreateWindowExW(0, L"ListBox", 0,
 			WS_CHILD | WS_BORDER | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY,
 			0, 25, 200, 0, hwnd, HMENU(IDC_TOOLBOX_LIST), 0, 0);
@@ -163,8 +310,9 @@ LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 		for (auto& i : g_listdescription) {
 			SendMessageW(tmph, LB_ADDSTRING, 0, (LPARAM)i);
 		}
+		ListBox_SelectString(tmph, -1, g_listdescription[0]);
 
-		hFont = CreateFontW(23, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, L"微软雅黑");
+		hFont = CreateFontW(23, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, L"Segoe UI");
 		SendMessageW(tmph, WM_SETFONT, WPARAM(hFont), 1);
 
 		g_ChangePanelHwnd = CreateWindowExW(0, L"Static", L"",
@@ -178,7 +326,7 @@ LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 			WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
 			0, 0, 0, 0, g_ChangePanelHwnd, HMENU(IDC_CHANGE_LIST), 0, 0);
 		g_ChangeEditHwnd = CreateWindowExW(WS_EX_CLIENTEDGE, L"Edit", L"",
-			WS_CHILD | WS_VISIBLE | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_READONLY,
+			WS_CHILD | WS_VISIBLE | ES_LEFT | ES_MULTILINE | 0 | WS_VSCROLL | ES_READONLY | WS_HSCROLL,
 			0, 0, 0, 0, g_ChangePanelHwnd, HMENU(IDC_CHANGE_EDIT), 0, 0);
 		SendMessageW(g_ChangeListHwnd, WM_SETFONT, WPARAM(hFont), 1);
 		SendMessageW(g_ChangeEditHwnd, WM_SETFONT, WPARAM(hFont), 1);
@@ -196,10 +344,13 @@ LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 
 	case WM_COMMAND: {
 		DWORD cmd = LOWORD(wparam);
-		if (cmd == IDCANCEL) {
+		if (cmd == IDM_FILE_PREVIEW) {
+			ShowPreviewWindow();
+		}
+		else if (cmd == IDCANCEL) {
 			PostQuitMessage(0);
 		}
-		if (cmd == IDM_EDIT_DUPLICATE) {
+		else if (cmd == IDM_EDIT_DUPLICATE) {
 			ExecuteDuplicateSelectedControl();
 		}
 		else if (cmd == IDM_EDIT_DELETE) {
@@ -278,7 +429,7 @@ LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 		const int leftPanelWidth = 240;
 		const int rightPanelWidth = 280;
 		rcwin.bottom -= statusHeight;
-		// 调整列表大小
+		// 工具箱列表
 		HWND hList = GetDlgItem(hwnd, IDC_TOOLBOX_LIST);
 		if (hList) {
 			SetWindowPos(hList, 0, 0, 25, leftPanelWidth, rcwin.bottom - changePanelHeight - statusHeight,
@@ -288,7 +439,7 @@ LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 		int centerWidth = max(0, rcwin.right);
 		int designerHeight = max(0, rcwin.bottom - changePanelHeight);
 
-		// 调整设计器窗口
+		// 设计器窗口
 		if (g_HWND) {
 			SetWindowPos(g_HWND, 0, leftPanelWidth, 0,
 				centerWidth - leftPanelWidth - rightPanelWidth, designerHeight,
@@ -308,12 +459,12 @@ LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 					SWP_NOZORDER | SWP_NOACTIVATE);
 			}
 			if (g_ChangeEditHwnd) {
-				SetWindowPos(g_ChangeEditHwnd, 0, listWidth, 0, centerWidth - listWidth, changePanelHeight,
+				SetWindowPos(g_ChangeEditHwnd, 0, listWidth, 0, centerWidth - listWidth - rightPanelWidth, changePanelHeight,
 					SWP_NOZORDER | SWP_NOACTIVATE);
 			}
 		}
 
-		// 调整属性窗口
+		// 属性面板
 		if (g_PropertiesHWND) {
 			SetWindowPos(g_PropertiesHWND, 0,
 				GetWindowSize(hwndParent, false).cx - rightPanelWidth, 0,
@@ -338,11 +489,11 @@ LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 	return DarkModeAPI::HandleWindow(hwnd, msg, wparam, lparam);
 }
 
-// ==================== 主函数 ====================
+// 主函数
 int main() {
 	DarkMode::value = DarkMode::SystemBackdropType::Mica;
 	InstallCBTHook(true, 1);
-	// 注册主窗口类
+	// 注释窗口类
 	WNDCLASSEXW wc = { sizeof(WNDCLASSEXW) };
 	wc.lpfnWndProc = MainWindowProc;
 	wc.hInstance = GetModuleHandleW(0);
@@ -350,7 +501,7 @@ int main() {
 	wc.lpszClassName = L"WindowClass";
 	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassExW(&wc);
-	// 注册设计器窗口类
+	// 注释窗口类
 	wc.lpszClassName = L"DialogDesigner";
 	wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) -> LRESULT {
 		switch (msg) {
@@ -375,7 +526,7 @@ int main() {
 				HWND hList = GetDlgItem(hwndParent, 3);
 				int index = SendMessageW(hList, LB_GETCURSEL, 0, 0);
 				if (index > 0 && index < (int)g_listclassname.size()) {
-					// 检查是否已有控件在该位置
+					// 创建控件
 					bool found = false;
 					for (auto& ctl : g_Controls) {
 						RECT rc;
@@ -405,16 +556,16 @@ int main() {
 		return DarkModeAPI::HandleWindow(hwnd, msg, wparam, lparam);
 		};
 	RegisterClassExW(&wc);
-	// 注册属性窗口类
+	// 注释窗口类
 	wc.lpszClassName = L"PropertiesPanel";
 	wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) -> LRESULT {
 		switch (msg) {
 		case WM_CREATE: {
-			HWND tmph = CreateWindowExW(0, L"Static", L"属性",
+			HWND tmph = CreateWindowExW(0, L"Static", L"属性面板",
 				WS_CHILD | WS_VISIBLE | SS_CENTER,
 				2, 1, 280, 23, hwnd, 0, 0, 0);
-			SendMessageW(tmph, WM_SETFONT, WPARAM(CreateFontA(20, 0, 0, 0, FW_BOLD, 0, 0, 0, 1, 0, 0, 0, 0, "微软雅黑")), 1);
-			HFONT hFont = CreateFontW(23, 0, 0, 0, FW_BOLD, 0, 0, 0, 1, 0, 0, 0, 0, L"微软雅黑");
+			SendMessageW(tmph, WM_SETFONT, WPARAM(CreateFontA(20, 0, 0, 0, FW_BOLD, 0, 0, 0, 1, 0, 0, 0, 0, "Segoe UI")), 1);
+			HFONT hFont = CreateFontW(23, 0, 0, 0, FW_BOLD, 0, 0, 0, 1, 0, 0, 0, 0, L"Segoe UI");
 			SendMessageW(tmph, WM_SETFONT, WPARAM(hFont), 1);
 			auto createcontent = [&](LPCWSTR cont, int id) {
 				int flag = 0;
@@ -422,16 +573,16 @@ int main() {
 					flag = ES_NUMBER;
 				}
 				tmph = CreateWindowExW(0, L"Static", cont, WS_CHILD | WS_VISIBLE | SS_LEFT, 3, 30 + 30 * (id - 100), 116, 26, hwnd, HMENU(0), 0, 0);
-				SendMessageW(tmph, WM_SETFONT, WPARAM(CreateFontA(25, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, "微软雅黑")), 1);
+				SendMessageW(tmph, WM_SETFONT, WPARAM(CreateFontA(25, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, "Segoe UI")), 1);
 				if (id == IDC_PROP_FONT_BTN) {
-					tmph = CreateWindowExW(0, L"Button", L"", WS_CHILD | WS_VISIBLE | BS_CENTER | BS_PUSHBOX, 120, 30 + 30 * (id - 100), 154, 28, hwnd,
+					tmph = CreateWindowExW(0, L"Button", L"请选择控件", WS_CHILD | WS_VISIBLE | BS_CENTER | BS_PUSHBOX | WS_DISABLED, 120, 30 + 30 * (id - 100), 154, 28, hwnd,
 						HMENU(IDC_PROP_FONT_BTN), 0, 0);
-					SendMessageW(tmph, WM_SETFONT, WPARAM(CreateFontA(22, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, "微软雅黑")), 1);
+					SendMessageW(tmph, WM_SETFONT, WPARAM(CreateFontA(22, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, "Segoe UI")), 1);
 				}
 				else {
 					tmph = CreateWindowExW(0, L"Edit", L"", flag | WS_CHILD | WS_VISIBLE | ES_LEFT | ES_AUTOHSCROLL | WS_BORDER, 120, 30 + 30 * (id - 100), 154, 28, hwnd,
 						HMENU(id), 0, 0);
-					SendMessageW(tmph, WM_SETFONT, WPARAM(CreateFontA(22, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, "微软雅黑")), 1);
+					SendMessageW(tmph, WM_SETFONT, WPARAM(CreateFontA(22, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, "Segoe UI")), 1);
 				}
 				};
 			createcontent(L"标题", IDC_PROP_TITLE);
@@ -447,9 +598,9 @@ int main() {
 		case WM_COMMAND: {
 			if (HIWORD(wparam) == EN_CHANGE) {
 				if (g_CurIndex < 0 || g_CurIndex >= (int)g_Controls.size()) {
-					// 如果没有选中控件，只处理对话框大小
+					// 当前没有选中的控件
 					if (LOWORD(wparam) == IDC_PROP_WIDTH || LOWORD(wparam) == IDC_PROP_HEIGHT) {
-						// 延迟应用，避免频繁调整
+						// 响应宽度和高度的变化
 						SetTimer(hwnd, 9999, 200, NULL);
 					}
 					break;
@@ -467,7 +618,8 @@ int main() {
 					GetDlgItemTextW(hwnd, IDC_PROP_TITLE, titleBuf, 256);
 					if (wcslen(titleBuf) > 0) {
 						ctl->title = titleBuf;
-						SetWindowTextW(ctl->hwnd, titleBuf);
+						wstring displayTitle = DecodeEscapedTextForControl(ctl->title);
+						SetWindowTextW(ctl->hwnd, displayTitle.c_str());
 					}
 					break;
 				}
@@ -518,6 +670,7 @@ int main() {
 					break;
 				}
 				}
+				AppendControlChangeMarker();
 			}
 			else {
 				switch (LOWORD(wparam)) {
@@ -545,7 +698,7 @@ int main() {
 		case WM_TIMER: {
 			if (wparam == 9999) {
 				KillTimer(hwnd, 9999);
-				// 应用对话框大小变化
+				// 当前没有选中的控件
 				if (g_CurIndex < 0 || g_CurIndex >= (int)g_Controls.size()) {
 					HWND hW = GetDlgItem(hwnd, IDC_PROP_WIDTH);
 					HWND hH = GetDlgItem(hwnd, IDC_PROP_HEIGHT);
@@ -581,7 +734,7 @@ int main() {
 		};
 	RegisterClassExW(&wc);
 
-	// 创建主窗口
+	// 创建父窗口
 	hwndParent = CreateWindowExW(WS_EX_CONTROLPARENT, L"WindowClass",
 		L"Dialog Designer by Yeskunkun",
 		WS_OVERLAPPEDWINDOW | 0,
@@ -590,31 +743,51 @@ int main() {
 
 	if (!hwndParent) return 0;
 
-	// 创建设计器窗口
+	// 创建主窗口
 	g_HWND = CreateWindowExW(WS_EX_CONTROLPARENT, L"DialogDesigner", L"Form1",
 		WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CHILD,
 		240, 0, START_WIDTH, START_HEIGHT,
 		hwndParent, 0, wc.hInstance, 0);
 	SendMessageW(g_HWND, WM_SETTINGCHANGE, 0, 0);
-	// 创建属性窗口
-	g_PropertiesHWND = CreateWindowExW(WS_EX_CONTROLPARENT, L"PropertiesPanel", L"属性窗口",
+
+	// 创建属性面板
+	g_PropertiesHWND = CreateWindowExW(WS_EX_CONTROLPARENT, L"PropertiesPanel", L"属性面板",
 		0 | WS_VISIBLE | WS_CHILD,
 		0, 0, 250, 400,
 		hwndParent, HMENU(0xFFFA), wc.hInstance, 0);
 	RECT rect = { 0, 0, START_WIDTH, START_HEIGHT };
 	AdjustWindowRectEx(&rect, GetWindowLongPtrW(g_HWND, -16), false, GetWindowLongPtrW(g_HWND, -20));
 	SetWindowSize(hwndParent, 240 + 280 + rect.right - rect.left, rect.bottom - rect.top + 24 + 200, false);
-	// 触发布局更新
+	// 创建父窗口
 	SendMessageW(hwndParent, WM_SETTINGCHANGE, 0, 0);
+	PostMessageW(hwndParent, WM_SIZE, 0, 0);
 	ShowWindow(hwndParent, true);
 	// 消息循环
 	MSG msg;
 	while (GetMessageW(&msg, 0, 0, 0)) {
 		if (msg.message == WM_KEYDOWN) {
-			// 如果焦点位于编辑框，跳过全局快捷键处理
+			// 当前没有选中的控件
 			HWND hFocus = GetFocus();
 			wchar_t cls[64] = {};
 			if (hFocus) GetClassNameW(hFocus, cls, 64);
+			if (msg.wParam == VK_F5) {
+				ShowPreviewWindow();
+				continue;
+			}
+			if (wcscmp(cls, L"Edit") == 0 && hFocus && GetParent(hFocus) == g_HWND) {
+				if ((GetKeyState(VK_CONTROL) & 0x8000) && msg.wParam == 'C') {
+					ExecuteDuplicateSelectedControl();
+					continue;
+				}
+				switch (msg.wParam) {
+				case VK_UP:    ExecuteMoveSelectedControl(0, -1); break;
+				case VK_DOWN:  ExecuteMoveSelectedControl(0, 1); break;
+				case VK_LEFT:  ExecuteMoveSelectedControl(-1, 0); break;
+				case VK_RIGHT: ExecuteMoveSelectedControl(1, 0); break;
+				case VK_DELETE: ExecuteDeleteSelectedControl(); break;
+				}
+				continue;
+			}
 			if (wcscmp(cls, L"Edit") == 0) {
 				TranslateMessage(&msg);
 				DispatchMessageW(&msg);
@@ -627,8 +800,14 @@ int main() {
 				continue;
 			}
 
-			// 控件移动 / 删除
+			// 上下左右 / 删除
 			switch (msg.wParam) {
+			case VK_ESCAPE: {
+				if (msg.hwnd != hwndParent) {
+					PostMessageW(GetForegroundWindow(), WM_CLOSE, 0, 0);
+				}
+				break;
+			}
 			case VK_UP:    ExecuteMoveSelectedControl(0, -1); break;
 			case VK_DOWN:  ExecuteMoveSelectedControl(0, 1); break;
 			case VK_LEFT:  ExecuteMoveSelectedControl(-1, 0); break;

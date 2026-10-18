@@ -144,6 +144,7 @@
     <ClCompile Include="DialogDesigner.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="control_converter.py" />
     <None Include="designer.py" />
   </ItemGroup>
   <ItemGroup>

@@ -25,7 +25,6 @@ extern HWND g_HWND, g_PropertiesHWND;
 extern const int START_WIDTH, START_HEIGHT;
 extern HFONT g_hGuiFont;
 extern vector<LPCWSTR> listclassname;
-extern int isDarkThemeEnabled;
 extern void SyncControlSummaryPanel();
 extern void AppendControlChangeMarker();
 
@@ -213,7 +212,7 @@ void DrawResizeHandles(HWND hCtrl, HDC hdc) {
 	// 不要删除共享资源
 }
 struct FontInfo {
-	std::wstring faceName;   // 字体名称，如 "微软雅黑"
+	std::wstring faceName;   // 字体名称，如 "Segoe UI"
 	int          height;     // 逻辑高度（负值 = 字符高度）
 	int          pointSize;  // 磅值（磅 = 高度 * 72 / DPI）
 	int          pixelSize;  // 像素高度（abs(height)）
@@ -350,11 +349,11 @@ void UpdatePropertyPanel(Control* ctl) {
 			lf.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
 			wcscpy_s(lf.lfFaceName, fi.faceName.c_str());
 			HFONT hFont = CreateFontIndirectW(&lf);
-            wchar_t oldBtnText[128] = {};
-            GetWindowTextW(hFontBtn, oldBtnText, 128);
-            if (wcscmp(oldBtnText, buf) != 0) {
-                SetWindowTextW(hFontBtn, buf);
-            }
+			wchar_t oldBtnText[128] = {};
+			GetWindowTextW(hFontBtn, oldBtnText, 128);
+			if (wcscmp(oldBtnText, buf) != 0) {
+				SetWindowTextW(hFontBtn, buf);
+			}
 		}
 		else {
 			SetWindowTextW(hFontBtn, L"Font...");
@@ -463,17 +462,17 @@ LRESULT CALLBACK ControlProc(HWND hCtrl, UINT msg, WPARAM wParam, LPARAM lParam)
 	case WM_LBUTTONDOWN: {
 		if (g_CurIndex != ctlIndex) {
 			int prevIndex = g_CurIndex;
-			if (prevIndex != -1 && prevIndex < (int)g_Controls.size()) {
-				// 立即刷新上一个控件，移除其拉伸句柄
-				InvalidateRect(g_Controls[prevIndex].hwnd, NULL, TRUE);
-				UpdateWindow(g_Controls[prevIndex].hwnd);
-			}
 			g_CurIndex = ctlIndex;
 			BringToFront(ctlIndex);
 			// 只重绘当前控件内容，避免擦除背景造成闪烁
 			InvalidateRect(hCtrl, NULL, FALSE);
 			UpdateWindow(hCtrl);
 			SetFocus(hCtrl);
+			if (prevIndex != -1 && prevIndex < (int)g_Controls.size()) {
+				// 立即刷新上一个控件，移除其拉伸句柄
+				UpdateWindow(g_Controls[prevIndex].hwnd);
+				InvalidateRect(g_Controls[prevIndex].hwnd, NULL, TRUE);
+			}
 			UpdatePropertyPanel(ctl);
 			SyncControlSummaryPanel();
 		}
@@ -588,12 +587,12 @@ LRESULT CALLBACK ControlProc(HWND hCtrl, UINT msg, WPARAM wParam, LPARAM lParam)
 	case WM_SETFOCUS: {
 		if (g_CurIndex != ctlIndex) {
 			int prevIndex = g_CurIndex;
+			g_CurIndex = ctlIndex;
+			BringToFront(ctlIndex);
 			if (prevIndex != -1 && prevIndex < (int)g_Controls.size()) {
 				InvalidateRect(g_Controls[prevIndex].hwnd, NULL, TRUE);
 				UpdateWindow(g_Controls[prevIndex].hwnd);
 			}
-			g_CurIndex = ctlIndex;
-			BringToFront(ctlIndex);
 			InvalidateRect(hCtrl, NULL, FALSE);
 			UpdateWindow(hCtrl);
 			SyncControlSummaryPanel();
@@ -639,7 +638,7 @@ void DuplicateControl(int index) {
 	if (!newHwnd) return;
 
 	// 复制字体
-	HFONT hFont = CreateFontW(22, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, L"微软雅黑");
+	HFONT hFont = CreateFontW(22, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, L"Segoe UI");
 	SendMessageW(newHwnd, WM_SETFONT, WPARAM(hFont), 1);
 
 	Control newCtl;
@@ -733,7 +732,7 @@ Control CreateControlWithProc(HWND hwnd, LPCWSTR classname, LPCWSTR title,
 		return empty;
 	}
 
-	HFONT hFont = CreateFontW(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, L"微软雅黑");
+	HFONT hFont = CreateFontW(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, L"Segoe UI");
 	SendMessageW(tmph, WM_SETFONT, WPARAM(hFont), 1);
 
 	Control ctl;
@@ -746,7 +745,7 @@ Control CreateControlWithProc(HWND hwnd, LPCWSTR classname, LPCWSTR title,
 	ctl.width = w;
 	ctl.height = h;
 	ctl.zOrder = g_ControlIdCounter;
-	ctl.hFont = g_hGuiFont;
+	ctl.hFont = hFont;
 	LOGGER.debug("Control created: hwnd=%p, class=%ls, title=%ls, x=%d, y=%d, w=%d, h=%d", tmph, classname, title, x, y, w, h);
 
 	SetWindowLongPtrW(tmph, GWLP_WNDPROC, (LONG_PTR)ControlProc);
@@ -924,7 +923,7 @@ void CreatePropertiesPanelWindow() {
 				(200 - 80) / 2, y, 80, 28, hwnd, HMENU(IDC_PROP_UPDATE_BTN), 0, 0);
 
 			// 设置字体
-			HFONT hFont = CreateFontW(18, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, L"微软雅黑");
+			HFONT hFont = CreateFontW(18, 0, 0, 0, FW_NORMAL, 0, 0, 0, 1, 0, 0, 0, 0, L"Segoe UI");
 			EnumChildWindows(hwnd, [](HWND hWnd, LPARAM lParam) -> BOOL {
 				SendMessageW(hWnd, WM_SETFONT, lParam, 1);
 				return true;
@@ -974,7 +973,5 @@ void CreatePropertiesPanelWindow() {
 	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassExW(&wc);
 
-	g_PropertiesHWND = CreateWindowExW(WS_EX_CONTROLPARENT, L"PropertiesPanel", L"属性窗口",
-		WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CHILD,
-		0, 0, 250, 400, hwndParent, HMENU(0xFFFA), 0, 0);
+	g_PropertiesHWND = CreateWindowExW(WS_EX_CONTROLPARENT, L"PropertiesPanel", L"属性窗口", WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CHILD, 0, 0, 250, 400, hwndParent, HMENU(0xFFFA), 0, 0);
 }
